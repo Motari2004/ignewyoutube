@@ -1,0 +1,5 @@
+# Ignore Instagram session cookies
+instagram_cookies.txt
+
+credentials.json
+token.pickle
