@@ -5,48 +5,97 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Scorpio | IG-Video Downloader</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800;900&display=swap" rel="stylesheet">
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body { 
             font-family: 'Plus Jakarta Sans', sans-serif; 
-            background-color: #08080a; 
+            background: #08080a; 
             -webkit-tap-highlight-color: transparent; 
+            min-height: 100vh;
+        }
+        
+        /* Animated background */
+        .bg-grid {
+            background-image: 
+                radial-gradient(circle at 20% 50%, rgba(99, 102, 241, 0.03) 0%, transparent 50%),
+                radial-gradient(circle at 80% 50%, rgba(139, 92, 246, 0.03) 0%, transparent 50%);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 0;
         }
         
         .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.8);
+        }
+
+        .glass-card-light {
             background: rgba(255, 255, 255, 0.02);
-            backdrop-filter: blur(25px);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.04);
         }
 
         .premium-glow {
             position: absolute;
-            width: 300px;
-            height: 300px;
-            background: radial-gradient(circle, rgba(99, 102, 241, 0.1) 0%, rgba(0, 0, 0, 0) 70%);
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, rgba(0, 0, 0, 0) 70%);
             z-index: -1;
-            filter: blur(60px);
+            filter: blur(80px);
         }
 
         .btn-gradient {
-            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+            background-size: 200% 200%;
+            animation: gradientShift 3s ease infinite;
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-gradient::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+            opacity: 0;
+            transition: opacity 0.4s;
+        }
+
+        .btn-gradient:hover:not(:disabled)::before {
+            opacity: 1;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
         }
 
         .btn-gradient:hover:not(:disabled) {
-            transform: scale(1.02);
-            box-shadow: 0 0 30px rgba(99, 102, 241, 0.3);
+            transform: translateY(-2px) scale(1.01);
+            box-shadow: 0 0 40px rgba(99, 102, 241, 0.3);
         }
 
         .btn-success {
-            background: #10b981 !important;
-            box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+            box-shadow: 0 0 30px rgba(16, 185, 129, 0.4) !important;
         }
 
         .btn-error {
-            background: #ef4444 !important;
-            box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+            box-shadow: 0 0 30px rgba(239, 68, 68, 0.4) !important;
         }
 
         @keyframes scan {
@@ -57,7 +106,7 @@
         .scan-line {
             height: 100%;
             width: 100%;
-            background: linear-gradient(to bottom, transparent, rgba(99, 102, 241, 0.08), transparent);
+            background: linear-gradient(to bottom, transparent, rgba(99, 102, 241, 0.06), transparent);
             position: absolute;
             animation: scan 1.5s ease-in-out infinite;
         }
@@ -70,15 +119,24 @@
 
         @keyframes scaleIn { 
             from { transform: scale(0) rotate(-20deg); opacity: 0; } 
-            to { transform: scale(1.1) rotate(0deg); opacity: 1; } 
+            to { transform: scale(1) rotate(0deg); opacity: 1; } 
         }
 
         .fade-in {
-            animation: fadeIn 0.5s ease-in forwards;
+            animation: fadeIn 0.5s ease forwards;
         }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .slide-up {
+            animation: slideUp 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
@@ -89,75 +147,127 @@
             text-decoration: none;
             border-bottom: 1px solid rgba(99, 102, 241, 0.2);
             transition: border-color 0.3s;
+            display: inline-block;
+            padding: 4px 0;
         }
 
         .result-link:hover {
             border-color: #818cf8;
+            color: #a78bfa;
+        }
+
+        #resultContainer, #errorContainer {
+            display: none;
+            margin-top: 20px;
+            padding: 16px 20px;
+            border-radius: 12px;
+            animation: slideUp 0.4s ease forwards;
         }
 
         #resultContainer {
-            display: none;
-            margin-top: 20px;
-            padding: 16px;
-            border-radius: 12px;
-            background: rgba(16, 185, 129, 0.05);
-            border: 1px solid rgba(16, 185, 129, 0.1);
+            background: rgba(16, 185, 129, 0.06);
+            border: 1px solid rgba(16, 185, 129, 0.12);
         }
 
         #errorContainer {
-            display: none;
-            margin-top: 20px;
-            padding: 16px;
-            border-radius: 12px;
-            background: rgba(239, 68, 68, 0.05);
-            border: 1px solid rgba(239, 68, 68, 0.1);
+            background: rgba(239, 68, 68, 0.06);
+            border: 1px solid rgba(239, 68, 68, 0.12);
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.5); }
+
+        /* Input focus glow */
+        .input-glow:focus {
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1), 0 0 20px rgba(99, 102, 241, 0.05) !important;
+        }
+
+        /* Status dot pulse */
+        .status-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-dot.online { background: #10b981; }
+        .status-dot.active { background: #818cf8; animation: pulse 1s infinite; }
+        .status-dot.error { background: #ef4444; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* Feature cards hover */
+        .feature-card {
+            transition: all 0.3s ease;
+            cursor: default;
+        }
+        .feature-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(99, 102, 241, 0.15);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 480px) {
+            .glass-card { padding: 20px !important; }
+            h1 { font-size: 2.5rem !important; }
         }
     </style>
 </head>
-<body class="text-slate-300 min-h-screen flex flex-col items-center md:justify-center justify-start p-4 pt-16 md:pt-4 relative overflow-hidden">
+<body>
 
-    <div class="premium-glow -top-10 -left-10"></div>
-    <div class="premium-glow -bottom-10 -right-10" style="background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, rgba(0, 0, 0, 0) 70%);"></div>
+    <!-- Background -->
+    <div class="bg-grid"></div>
+    <div class="premium-glow -top-20 -left-20"></div>
+    <div class="premium-glow -bottom-20 -right-20" style="background: radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, rgba(0, 0, 0, 0) 70%);"></div>
 
-    <main class="w-full max-w-xl z-10">
-        <div class="text-center mb-8">
-            <div class="inline-flex items-center gap-2 mb-3 px-3 py-1 rounded-full bg-white/5 border border-white/10">
-                <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
-                <span class="text-[8px] uppercase tracking-[0.2em] font-black text-slate-400">System v2.5 Online</span>
+    <main class="relative z-10 w-full max-w-2xl mx-auto px-4 py-8 md:py-12">
+        <!-- Header -->
+        <div class="text-center mb-10 slide-up">
+            <div class="inline-flex items-center gap-3 mb-4 px-4 py-1.5 rounded-full bg-white/5 border border-white/10">
+                <span class="status-dot online"></span>
+                <span class="text-[10px] uppercase tracking-[0.2em] font-black text-slate-400">System v2.5 Online</span>
             </div>
             
-            <h1 class="text-6xl md:text-7xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white via-slate-200 to-indigo-500 leading-none">
+            <h1 class="text-5xl md:text-7xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-b from-white via-slate-200 to-indigo-400 leading-[1.1]">
                 SCORPIO
             </h1>
             
-            <div class="mt-3 mb-2 inline-flex items-center gap-2 px-3 py-1 rounded-md bg-indigo-500/10 border border-indigo-500/20">
-                <span class="text-[10px] md:text-xs font-bold text-indigo-400 uppercase tracking-[0.2em]">IG-Video Downloader</span>
+            <div class="mt-4 mb-2 inline-flex items-center gap-2 px-4 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
+                <span class="text-[11px] md:text-xs font-bold text-indigo-400 uppercase tracking-[0.2em]">Instagram → Google Drive</span>
             </div>
             
-            <p class="text-[10px] md:text-xs text-slate-500 font-medium tracking-widest uppercase opacity-60">High-Performance Extraction Engine</p>
+            <p class="text-xs text-slate-500 font-medium tracking-widest uppercase opacity-60 mt-2">High-Performance Extraction Engine</p>
         </div>
 
-        <div class="glass-card rounded-[2.5rem] p-6 md:p-10 relative overflow-hidden" id="mainCard">
+        <!-- Main Card -->
+        <div class="glass-card rounded-[2.5rem] p-6 md:p-10 relative overflow-hidden slide-up" style="animation-delay: 0.1s;">
             <div id="scanLine" class="absolute inset-0 pointer-events-none hidden">
                 <div class="scan-line"></div>
             </div>
 
             <form id="dlForm" action="/download" method="POST" class="space-y-6">
                 <div>
-                    <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3 ml-1">Media Stream URL</label>
+                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Media Stream URL</label>
                     <input type="url" name="url" id="urlInput" required 
-                        placeholder="Paste Instagram link here..." 
-                        class="w-full px-5 py-4 rounded-xl bg-black/40 border border-white/5 focus:border-indigo-500/40 focus:ring-4 focus:ring-indigo-500/10 focus:outline-none transition-all text-white text-sm placeholder:text-slate-700">
+                        placeholder="https://www.instagram.com/reel/..." 
+                        class="input-glow w-full px-5 py-4 rounded-xl bg-black/40 border border-white/10 focus:border-indigo-500/40 focus:ring-4 focus:ring-indigo-500/10 focus:outline-none transition-all text-white text-sm placeholder:text-slate-600">
                 </div>
 
                 <div>
-                    <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3 ml-1">Google Drive Folder ID (Optional)</label>
+                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 ml-1">Google Drive Folder ID <span class="text-slate-600 font-normal">(Optional)</span></label>
                     <input type="text" name="folder_id" id="folderInput" 
                         placeholder="Leave empty for root folder" 
-                        class="w-full px-5 py-4 rounded-xl bg-black/40 border border-white/5 focus:border-indigo-500/40 focus:ring-4 focus:ring-indigo-500/10 focus:outline-none transition-all text-white text-sm placeholder:text-slate-700">
+                        class="input-glow w-full px-5 py-4 rounded-xl bg-black/40 border border-white/10 focus:border-indigo-500/40 focus:ring-4 focus:ring-indigo-500/10 focus:outline-none transition-all text-white text-sm placeholder:text-slate-600">
                 </div>
 
-                <button type="submit" id="submitBtn" class="w-full btn-gradient text-white font-black text-xs tracking-[0.2em] py-4 rounded-xl flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed">
+                <button type="submit" id="submitBtn" class="w-full btn-gradient text-white font-black text-xs tracking-[0.2em] py-4.5 rounded-xl flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 min-h-[60px]">
                     <span id="btnText">EXECUTE FETCH</span>
                     <div id="successCheck" class="success-checkmark">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -167,19 +277,20 @@
                 </button>
             </form>
 
+            <!-- Loading -->
             <div id="loading" class="hidden mt-8">
                 <div class="flex justify-between items-center mb-2">
                     <span class="text-indigo-400 font-bold uppercase tracking-tighter text-[9px]">Pipeline Processing</span>
-                    <span id="percent" class="text-slate-500 text-[10px] tabular-nums">0%</span>
+                    <span id="percent" class="text-slate-500 text-[10px] tabular-nums font-medium">0%</span>
                 </div>
-                <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div id="progressBar" class="h-full bg-indigo-500 w-0 transition-all duration-300 shadow-[0_0_10px_rgba(99,102,241,0.5)]"></div>
+                <div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                    <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 w-0 transition-all duration-300 shadow-[0_0_15px_rgba(99,102,241,0.3)]"></div>
                 </div>
-                <p id="statusText" class="text-[8px] text-slate-500 mt-2 text-center uppercase tracking-wider">Initializing...</p>
+                <p id="statusText" class="text-[9px] text-slate-500 mt-2 text-center uppercase tracking-wider font-medium">Initializing...</p>
             </div>
 
-            <!-- Result Container -->
-            <div id="resultContainer" class="fade-in">
+            <!-- Result -->
+            <div id="resultContainer">
                 <div class="flex items-start gap-3">
                     <svg class="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -191,8 +302,8 @@
                 </div>
             </div>
 
-            <!-- Error Container -->
-            <div id="errorContainer" class="fade-in">
+            <!-- Error -->
+            <div id="errorContainer">
                 <div class="flex items-start gap-3">
                     <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
@@ -205,17 +316,18 @@
             </div>
         </div>
 
-        <div class="grid grid-cols-3 gap-2 md:gap-4 mt-6">
-            <div class="glass-card rounded-xl p-3 md:p-5 border-t border-white/5">
+        <!-- Status Cards -->
+        <div class="grid grid-cols-3 gap-2 md:gap-4 mt-6 slide-up" style="animation-delay: 0.2s;">
+            <div class="glass-card-light rounded-xl p-3 md:p-5 border-t border-white/5 feature-card">
                 <span class="text-[7px] md:text-[10px] text-indigo-400 font-black uppercase tracking-wider block mb-1">Engine</span>
                 <span class="text-[9px] md:text-sm font-bold text-white truncate block tracking-tight">CORE-V2</span>
                 <p id="engineStatus" class="text-[7px] md:text-[9px] text-slate-500 uppercase mt-0.5 truncate">Optimized</p>
             </div>
             
-            <div class="glass-card rounded-xl p-3 md:p-5 border-t border-white/5 relative">
+            <div class="glass-card-light rounded-xl p-3 md:p-5 border-t border-white/5 relative feature-card">
                 <span class="text-[7px] md:text-[10px] text-indigo-400 font-black uppercase tracking-wider block mb-1">Gateway</span>
                 <div class="flex items-center gap-1">
-                    <span class="text-[9px] md:text-sm font-bold text-white truncate tracking-tight">0.02ms</span>
+                    <span class="text-[9px] md:text-sm font-bold text-white truncate tracking-tight" id="gatewayLatency">0.02ms</span>
                     <span class="flex h-1.5 w-1.5 relative">
                         <span class="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
@@ -224,10 +336,22 @@
                 <p class="text-[7px] md:text-[9px] text-slate-500 uppercase mt-0.5">Active</p>
             </div>
 
-            <div class="glass-card rounded-xl p-3 md:p-5 border-t border-white/5">
+            <div class="glass-card-light rounded-xl p-3 md:p-5 border-t border-white/5 feature-card">
                 <span class="text-[7px] md:text-[10px] text-indigo-400 font-black uppercase tracking-wider block mb-1">Fidelity</span>
                 <span class="text-[9px] md:text-sm font-bold text-white truncate tracking-tight">4K MAX</span>
                 <p class="text-[7px] md:text-[9px] text-slate-500 uppercase mt-0.5">Original Source</p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-8 text-center slide-up" style="animation-delay: 0.3s;">
+            <p class="text-[8px] text-slate-600 uppercase tracking-[0.15em] font-medium">
+                Powered by yt-dlp • Google Drive API • Quart
+            </p>
+            <div class="flex justify-center gap-3 mt-2">
+                <span class="text-[7px] text-slate-700 uppercase tracking-wider">🔒 Encrypted</span>
+                <span class="text-[7px] text-slate-700 uppercase tracking-wider">⚡ Optimized</span>
+                <span class="text-[7px] text-slate-700 uppercase tracking-wider">🔄 Auto-upload</span>
             </div>
         </div>
     </main>
@@ -249,6 +373,7 @@
         const resultLink = document.getElementById('resultLink');
         const errorMessage = document.getElementById('errorMessage');
         const errorDetail = document.getElementById('errorDetail');
+        const gatewayLatency = document.getElementById('gatewayLatency');
 
         // Reset UI state
         function resetUI() {
@@ -265,7 +390,16 @@
             engineStatus.style.color = "";
             progressBar.style.width = '0%';
             percentText.innerText = '0%';
+            gatewayLatency.innerText = '0.02ms';
         }
+
+        // Update gateway latency randomly
+        function updateLatency() {
+            const latencies = ['0.02ms', '0.03ms', '0.01ms', '0.04ms', '0.02ms'];
+            const randomLatency = latencies[Math.floor(Math.random() * latencies.length)];
+            gatewayLatency.innerText = randomLatency;
+        }
+        setInterval(updateLatency, 5000);
 
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -281,19 +415,20 @@
             engineStatus.innerText = "Active";
             engineStatus.style.color = "#818cf8";
             statusText.innerText = "Connecting to Instagram...";
+            gatewayLatency.innerText = 'Processing...';
             
             let progress = 0;
             const interval = setInterval(() => {
-                progress += Math.random() * 20 + 5;
+                progress += Math.random() * 15 + 5;
                 if (progress > 95) progress = 95;
                 progressBar.style.width = progress + '%';
                 percentText.innerText = Math.round(progress) + '%';
                 
-                if (progress < 30) statusText.innerText = "Connecting to Instagram...";
-                else if (progress < 60) statusText.innerText = "Downloading video...";
-                else if (progress < 80) statusText.innerText = "Processing video...";
+                if (progress < 25) statusText.innerText = "Connecting to Instagram...";
+                else if (progress < 50) statusText.innerText = "Downloading video...";
+                else if (progress < 75) statusText.innerText = "Processing video...";
                 else statusText.innerText = "Uploading to Google Drive...";
-            }, 300);
+            }, 250);
 
             try {
                 const formData = new FormData(form);
@@ -316,6 +451,8 @@
                     successCheck.style.display = 'block';
                     btn.classList.add('btn-success');
                     engineStatus.innerText = "Completed";
+                    engineStatus.style.color = "#10b981";
+                    gatewayLatency.innerText = '✅ Done';
                     
                     // Show result
                     resultContainer.style.display = 'block';
@@ -327,7 +464,7 @@
                         resetUI();
                         document.getElementById('urlInput').value = '';
                         document.getElementById('folderInput').value = '';
-                    }, 5000);
+                    }, 6000);
                 } else {
                     // Error State
                     clearInterval(interval);
@@ -338,6 +475,7 @@
                     btn.classList.add('btn-error');
                     engineStatus.innerText = "Error";
                     engineStatus.style.color = "#ef4444";
+                    gatewayLatency.innerText = '❌ Error';
                     
                     errorContainer.style.display = 'block';
                     errorMessage.textContent = 'Download Failed';
@@ -345,7 +483,7 @@
                     
                     setTimeout(() => {
                         resetUI();
-                    }, 5000);
+                    }, 6000);
                 }
             } catch (error) {
                 clearInterval(interval);
@@ -356,6 +494,7 @@
                 btn.classList.add('btn-error');
                 engineStatus.innerText = "Error";
                 engineStatus.style.color = "#ef4444";
+                gatewayLatency.innerText = '❌ Error';
                 
                 errorContainer.style.display = 'block';
                 errorMessage.textContent = 'Connection Error';
@@ -363,13 +502,18 @@
                 
                 setTimeout(() => {
                     resetUI();
-                }, 5000);
+                }, 6000);
             }
         });
 
         // Reset on input change
         document.getElementById('urlInput').addEventListener('input', function() {
             if (this.value) resetUI();
+        });
+
+        // Auto-focus on URL input
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('urlInput').focus();
         });
     </script>
 </body>
