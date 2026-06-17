@@ -26,7 +26,10 @@ CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB
 COOKIE_FILE = "instagram_cookies.txt"
 
 # Google Drive API scopes
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = ['https://www.googleapis.com/auth/drive']
+
+# Instagram Downloads Folder Name in Google Drive
+INSTAGRAM_FOLDER_NAME = "Instagram_Downloads"
 
 # Handle Cookies from Environment
 COOKIES_CONTENT = os.environ.get("COOKIES_CONTENT")
@@ -50,6 +53,7 @@ logger = logging.getLogger("IG-Drive-DL")
 class GoogleDriveUploader:
     def __init__(self):
         self.drive_service = self.authenticate_drive()
+        self.instagram_folder_id = self.get_or_create_folder()
         self.is_render = os.environ.get('RENDER') == 'true'
     
     def authenticate_drive(self):
@@ -117,8 +121,38 @@ class GoogleDriveUploader:
         logger.info("📌 Continuing without Drive upload...")
         return None
     
+    def get_or_create_folder(self):
+        """Get or create the Instagram Downloads folder in Google Drive"""
+        if not self.drive_service:
+            return None
+        
+        try:
+            # Search for existing folder
+            query = f"name='{INSTAGRAM_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            results = self.drive_service.files().list(q=query, fields="files(id, name)").execute()
+            files = results.get('files', [])
+            
+            if files:
+                folder_id = files[0]['id']
+                logger.info(f"📁 Found existing folder: {INSTAGRAM_FOLDER_NAME} (ID: {folder_id})")
+                return folder_id
+            else:
+                # Create new folder
+                file_metadata = {
+                    'name': INSTAGRAM_FOLDER_NAME,
+                    'mimeType': 'application/vnd.google-apps.folder'
+                }
+                folder = self.drive_service.files().create(body=file_metadata, fields='id').execute()
+                folder_id = folder.get('id')
+                logger.info(f"📁 Created new folder: {INSTAGRAM_FOLDER_NAME} (ID: {folder_id})")
+                return folder_id
+                
+        except Exception as e:
+            logger.error(f"❌ Error creating/finding folder: {e}")
+            return None
+    
     async def upload_to_drive(self, file_path, folder_id=None):
-        """Upload file to Google Drive"""
+        """Upload file to Google Drive - uses Instagram folder by default"""
         if not self.drive_service:
             logger.error("❌ No Drive service available")
             return None
@@ -131,12 +165,15 @@ class GoogleDriveUploader:
             file_name = os.path.basename(file_path)
             logger.info(f"📤 Uploading: {file_name} to Google Drive...")
             
+            # Use Instagram folder if no folder_id provided
+            target_folder = folder_id if folder_id else self.instagram_folder_id
+            
             file_metadata = {
                 'name': file_name
             }
             
-            if folder_id and folder_id.strip():
-                file_metadata['parents'] = [folder_id.strip()]
+            if target_folder:
+                file_metadata['parents'] = [target_folder]
             
             media = MediaFileUpload(
                 file_path,
@@ -147,11 +184,12 @@ class GoogleDriveUploader:
             file = self.drive_service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id, name, webViewLink'
+                fields='id, name, webViewLink, parents'
             ).execute()
             
             logger.info(f"✅ Upload complete: {file.get('name')}")
             logger.info(f"🔗 Link: {file.get('webViewLink')}")
+            logger.info(f"📁 Folder: {INSTAGRAM_FOLDER_NAME}")
             
             return file
             
@@ -270,7 +308,7 @@ async def download():
         logger.info(f"📥 Downloading: {url}")
         info = await extract_instagram_info(url)
         
-        # Step 2: Upload to Google Drive
+        # Step 2: Upload to Google Drive (auto-uses Instagram folder)
         drive = GoogleDriveUploader()
         file = await drive.upload_to_drive(info["filename"], folder_id)
         
@@ -288,7 +326,8 @@ async def download():
                 "success": True,
                 "message": f"✅ Upload complete: {file.get('name')}",
                 "link": file.get('webViewLink'),
-                "file_id": file.get('id')
+                "file_id": file.get('id'),
+                "folder": INSTAGRAM_FOLDER_NAME
             }, 200
         else:
             return {
@@ -400,6 +439,16 @@ HTML_TEMPLATE = """
             margin-left: 10px;
             background: #28a745;
         }
+        .folder-info {
+            background: #e3f2fd;
+            border: 1px solid #2196f3;
+            color: #0d47a1;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -409,6 +458,10 @@ HTML_TEMPLATE = """
         </h1>
         <p style="text-align:center;color:#666;">Download Instagram Reels & Videos directly to Google Drive</p>
         
+        <div class="folder-info">
+            📁 Videos will be saved to: <strong>Instagram_Downloads</strong> folder
+        </div>
+        
         <form id="downloadForm">
             <div class="form-group">
                 <label for="url">Instagram URL</label>
@@ -417,7 +470,7 @@ HTML_TEMPLATE = """
             
             <div class="form-group">
                 <label for="folder_id">Google Drive Folder ID (Optional)</label>
-                <input type="text" id="folder_id" name="folder_id" placeholder="Leave empty for root folder">
+                <input type="text" id="folder_id" name="folder_id" placeholder="Leave empty for Instagram_Downloads folder">
             </div>
             
             <button type="submit" id="submitBtn">Download & Upload to Drive</button>
@@ -466,6 +519,7 @@ HTML_TEMPLATE = """
                     statusDiv.className = 'status active success';
                     statusDiv.style.display = 'block';
                     statusContent.innerHTML = '✅ ' + data.message + 
+                        '<br>📁 Folder: <strong>' + data.folder + '</strong>' +
                         '<br>🔗 <a href="' + data.link + '" target="_blank" class="link">View in Google Drive</a>';
                 } else {
                     statusDiv.className = 'status active error';
