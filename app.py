@@ -51,6 +51,12 @@ logging.basicConfig(
 logger = logging.getLogger("Reel-Downloader")
 
 
+
+
+
+
+
+
 class ReelTracker:
     """Track all reels - downloaded and pending"""
     
@@ -63,8 +69,21 @@ class ReelTracker:
             try:
                 with open(filename, 'r') as f:
                     data = json.load(f)
+                    # Handle old list format
+                    if isinstance(data, list):
+                        logger.info(f"📋 Converting old list format to dict for {filename}")
+                        converted = {}
+                        for item in data:
+                            if isinstance(item, dict):
+                                shortcode = item.get('shortcode', '')
+                                if shortcode:
+                                    converted[shortcode] = item
+                        # Save converted format
+                        self._save(filename, converted)
+                        return converted
                     return data if isinstance(data, dict) else {}
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to load {filename}: {e}")
                 return {}
         return {}
     
@@ -106,14 +125,24 @@ class ReelTracker:
     
     def get_stats(self) -> Dict:
         total = len(self.downloaded)
-        today = sum(1 for d in self.downloaded.values() 
-                   if d.get("download_date", "").startswith(datetime.now().strftime("%Y-%m-%d")))
+        today = 0
+        for d in self.downloaded.values():
+            if isinstance(d, dict):
+                download_date = d.get("download_date", "")
+                if download_date.startswith(datetime.now().strftime("%Y-%m-%d")):
+                    today += 1
         pending = len(self.pending)
         return {
             "total_downloaded": total,
             "downloaded_today": today,
             "pending": pending
         }
+
+
+
+
+
+
 
 
 class GoogleDriveUploader:
