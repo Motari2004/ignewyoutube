@@ -1,5 +1,5 @@
 """
-Intelligent Daily Reel Downloader - Preview URLs before downloading
+Intelligent Daily Reel Downloader - Shows Found URLs from Reel Finder
 """
 
 import os
@@ -25,8 +25,17 @@ from googleapiclient.http import MediaFileUpload
 # -----------------------------
 # Configuration
 # -----------------------------
-PORT = int(os.environ.get("PORT", 5000))
-REEL_FINDER_URL = os.environ.get("REEL_FINDER_URL", "https://reelfinder.onrender.com")
+PORT = int(os.environ.get("PORT", 8080))
+
+def get_reel_finder_url():
+    if os.environ.get("REEL_FINDER_URL"):
+        return os.environ.get("REEL_FINDER_URL")
+    if os.environ.get("RENDER"):
+        service_name = os.environ.get("RENDER_SERVICE_NAME", "daily-reel-generator")
+        return f"https://{service_name}.onrender.com"
+    return "http://localhost:5000"
+
+REEL_FINDER_URL = get_reel_finder_url()
 COOKIE_FILE = "instagram_cookies.txt"
 
 # Google Drive
@@ -34,8 +43,8 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 INSTAGRAM_FOLDER_NAME = "Instagram_Daily_Reels"
 DOWNLOADED_LOG_FILE = "downloaded_reels.json"
 PENDING_LOG_FILE = "pending_reels.json"
+FOUND_URLS_FILE = "found_urls.json"  # New file to cache found URLs
 
-# Handle Cookies
 COOKIES_CONTENT = os.environ.get("COOKIES_CONTENT")
 if COOKIES_CONTENT:
     with open(COOKIE_FILE, "w") as f:
@@ -49,12 +58,52 @@ logging.basicConfig(
     stream=sys.stdout
 )
 logger = logging.getLogger("Reel-Downloader")
+logger.info(f"📌 Using Reel Finder at: {REEL_FINDER_URL}")
 
 
-
-
-
-
+class FoundUrlsTracker:
+    """Track found URLs from Reel Finder"""
+    
+    def __init__(self):
+        self.found_urls = self._load()
+    
+    def _load(self) -> Dict:
+        if os.path.exists(FOUND_URLS_FILE):
+            try:
+                with open(FOUND_URLS_FILE, 'r') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+    
+    def _save(self):
+        with open(FOUND_URLS_FILE, 'w') as f:
+            json.dump(self.found_urls, f, indent=2)
+    
+    def update(self, topics_data: Dict):
+        """Update found URLs from Reel Finder"""
+        self.found_urls = {
+            "last_updated": datetime.now().isoformat(),
+            "topics": topics_data
+        }
+        self._save()
+    
+    def get_all_urls(self) -> List[str]:
+        """Get all found URLs as a flat list"""
+        urls = []
+        for topic, reels in self.found_urls.get("topics", {}).items():
+            for reel in reels:
+                if isinstance(reel, dict) and reel.get("url"):
+                    urls.append(reel["url"])
+        return urls
+    
+    def get_topic_urls(self, topic: str) -> List[str]:
+        """Get URLs for a specific topic"""
+        urls = []
+        for reel in self.found_urls.get("topics", {}).get(topic, []):
+            if isinstance(reel, dict) and reel.get("url"):
+                urls.append(reel["url"])
+        return urls
 
 
 class ReelTracker:
@@ -69,16 +118,14 @@ class ReelTracker:
             try:
                 with open(filename, 'r') as f:
                     data = json.load(f)
-                    # Handle old list format
                     if isinstance(data, list):
-                        logger.info(f"📋 Converting old list format to dict for {filename}")
+                        logger.info(f"Converting old list format to dict for {filename}")
                         converted = {}
                         for item in data:
                             if isinstance(item, dict):
                                 shortcode = item.get('shortcode', '')
                                 if shortcode:
                                     converted[shortcode] = item
-                        # Save converted format
                         self._save(filename, converted)
                         return converted
                     return data if isinstance(data, dict) else {}
@@ -100,13 +147,11 @@ class ReelTracker:
             "download_date": datetime.now().isoformat()
         }
         self._save(DOWNLOADED_LOG_FILE, self.downloaded)
-        # Remove from pending
         if shortcode in self.pending:
             del self.pending[shortcode]
             self._save(PENDING_LOG_FILE, self.pending)
     
     def save_pending(self, reels: List[Dict]):
-        """Save pending reels for preview"""
         self.pending = {}
         for reel in reels:
             self.pending[reel['shortcode']] = {
@@ -116,7 +161,6 @@ class ReelTracker:
         self._save(PENDING_LOG_FILE, self.pending)
     
     def get_pending(self) -> List[Dict]:
-        """Get all pending reels"""
         return list(self.pending.values())
     
     def clear_pending(self):
@@ -139,12 +183,6 @@ class ReelTracker:
         }
 
 
-
-
-
-
-
-
 class GoogleDriveUploader:
     """Upload to Google Drive"""
     
@@ -160,7 +198,7 @@ class GoogleDriveUploader:
             try:
                 token_data = json.loads(base64.b64decode(token_json).decode('utf-8'))
                 creds = Credentials.from_authorized_user_info(token_data, SCOPES)
-                logger.info("✅ Drive authenticated via env")
+                logger.info("Drive authenticated via env")
                 return build('drive', 'v3', credentials=creds)
             except Exception as e:
                 logger.warning(f"Env token failed: {e}")
@@ -169,12 +207,12 @@ class GoogleDriveUploader:
             try:
                 with open('drive_token.pickle', 'rb') as f:
                     creds = pickle.load(f)
-                logger.info("✅ Drive authenticated via token")
+                logger.info("Drive authenticated via token")
                 return build('drive', 'v3', credentials=creds)
             except:
                 pass
         
-        logger.error("❌ No Drive credentials found")
+        logger.error("No Drive credentials found")
         return None
     
     def _get_or_create_folder(self):
@@ -187,7 +225,7 @@ class GoogleDriveUploader:
             files = results.get('files', [])
             
             if files:
-                logger.info(f"📁 Found folder: {INSTAGRAM_FOLDER_NAME}")
+                logger.info(f"Found folder: {INSTAGRAM_FOLDER_NAME}")
                 return files[0]['id']
             
             file_metadata = {
@@ -195,7 +233,7 @@ class GoogleDriveUploader:
                 'mimeType': 'application/vnd.google-apps.folder'
             }
             folder = self.service.files().create(body=file_metadata, fields='id').execute()
-            logger.info(f"📁 Created folder: {INSTAGRAM_FOLDER_NAME}")
+            logger.info(f"Created folder: {INSTAGRAM_FOLDER_NAME}")
             return folder.get('id')
             
         except Exception as e:
@@ -208,7 +246,7 @@ class GoogleDriveUploader:
         
         try:
             file_name = os.path.basename(file_path)
-            logger.info(f"📤 Uploading: {file_name}")
+            logger.info(f"Uploading: {file_name}")
             
             file_metadata = {
                 'name': file_name,
@@ -226,7 +264,7 @@ class GoogleDriveUploader:
                 fields='id, name, webViewLink'
             ).execute()
             
-            logger.info(f"✅ Upload complete: {file.get('name')}")
+            logger.info(f"Upload complete: {file.get('name')}")
             return file
             
         except Exception as e:
@@ -240,6 +278,7 @@ class IntelligentReelDownloader:
     def __init__(self):
         self.tracker = ReelTracker()
         self.drive = GoogleDriveUploader()
+        self.found_urls = FoundUrlsTracker()
         self.current_pending = []
     
     def extract_shortcode(self, url: str) -> Optional[str]:
@@ -250,21 +289,35 @@ class IntelligentReelDownloader:
         """Fetch reels from Reel Finder without downloading"""
         topics = ["mafia", "gangstars", "murphy", "war", "ninjas"]
         
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{REEL_FINDER_URL}/api/topics")
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("topics"):
+                        topics = data["topics"]
+                        logger.info(f"Using topics from Reel Finder: {topics}")
+        except Exception as e:
+            logger.warning(f"Could not fetch topics from Reel Finder, using defaults: {e}")
+        
         results = {
             "date": datetime.now().strftime("%Y-%m-%d"),
             "topics": {},
             "total": 0,
             "new": 0,
-            "already_downloaded": 0
+            "already_downloaded": 0,
+            "reel_finder_url": REEL_FINDER_URL
         }
         
         all_reels = []
+        found_topics = {}
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             for topic in topics:
                 try:
                     response = await client.get(f"{REEL_FINDER_URL}/urls?topic={topic}")
                     if response.status_code != 200:
+                        logger.warning(f"Failed to fetch {topic}: {response.status_code}")
                         continue
                     
                     data = response.json()
@@ -297,9 +350,13 @@ class IntelligentReelDownloader:
                         results["total"] += 1
                     
                     results["topics"][topic] = topic_reels
+                    found_topics[topic] = topic_reels
                     
                 except Exception as e:
                     logger.error(f"Error fetching {topic}: {e}")
+        
+        # Save found URLs
+        self.found_urls.update(found_topics)
         
         # Save pending reels (only new ones)
         pending = [r for r in all_reels if not r["is_downloaded"]]
@@ -313,7 +370,6 @@ class IntelligentReelDownloader:
         pending = self.tracker.get_pending()
         
         if shortcodes:
-            # Filter to specific shortcodes
             pending = [p for p in pending if p['shortcode'] in shortcodes]
         
         if not pending:
@@ -337,7 +393,6 @@ class IntelligentReelDownloader:
             shortcode = reel['shortcode']
             url = reel['url']
             
-            # Double-check not already downloaded
             if self.tracker.is_downloaded(shortcode):
                 results["skipped"] += 1
                 results["details"].append({
@@ -348,7 +403,7 @@ class IntelligentReelDownloader:
                 continue
             
             try:
-                logger.info(f"📥 Downloading: {shortcode}")
+                logger.info(f"Downloading: {shortcode}")
                 
                 ydl_opts = {
                     "format": "best",
@@ -366,7 +421,6 @@ class IntelligentReelDownloader:
                 
                 info, filename = await asyncio.to_thread(download)
                 
-                # Extract metadata
                 description = info.get('description', '')
                 hashtags = re.findall(r'#(\w+)', description)
                 
@@ -381,10 +435,8 @@ class IntelligentReelDownloader:
                     "full_description": f"📝 {description[:1000]}\n\n👤 @{info.get('uploader', 'Unknown')}\n❤️ {info.get('like_count', 0)} likes\n📥 Downloaded: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 }
                 
-                # Upload to Drive
                 file = await self.drive.upload(filename, metadata)
                 
-                # Cleanup
                 if os.path.exists(filename):
                     os.remove(filename)
                 
@@ -410,7 +462,7 @@ class IntelligentReelDownloader:
                         "reason": "upload failed"
                     })
                 
-                await asyncio.sleep(2)  # Rate limit
+                await asyncio.sleep(2)
                 
             except Exception as e:
                 logger.error(f"Error downloading {shortcode}: {e}")
@@ -421,7 +473,6 @@ class IntelligentReelDownloader:
                     "reason": str(e)
                 })
         
-        # Clear pending after download
         self.tracker.clear_pending()
         
         return results
@@ -436,7 +487,83 @@ downloader = IntelligentReelDownloader()
 @app.route("/")
 async def index():
     stats = downloader.tracker.get_stats()
-    return await render_template_string("""
+    found_urls = downloader.found_urls.found_urls
+    return await render_template_string(HTML_TEMPLATE, 
+                                       stats=stats, 
+                                       folder=INSTAGRAM_FOLDER_NAME, 
+                                       reel_finder_url=REEL_FINDER_URL,
+                                       found_urls=found_urls)
+
+@app.route("/api/fetch", methods=["POST"])
+async def fetch_reels():
+    try:
+        results = await downloader.fetch_reels()
+        results["reel_finder_url"] = REEL_FINDER_URL
+        return jsonify({
+            "success": True,
+            **results
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route("/api/download", methods=["POST"])
+async def download_reels():
+    try:
+        data = await request.get_json()
+        shortcodes = data.get("shortcodes", [])
+        results = await downloader.download_pending(shortcodes)
+        return jsonify({
+            "success": True,
+            **results
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route("/api/stats")
+async def get_stats():
+    return jsonify(downloader.tracker.get_stats())
+
+@app.route("/api/pending")
+async def get_pending():
+    return jsonify({
+        "success": True,
+        "pending": downloader.tracker.get_pending()
+    })
+
+@app.route("/api/found-urls")
+async def get_found_urls():
+    """Get all found URLs from Reel Finder"""
+    return jsonify(downloader.found_urls.found_urls)
+
+@app.route("/api/found-urls/all")
+async def get_all_found_urls():
+    """Get all found URLs as a flat list"""
+    return jsonify({
+        "urls": downloader.found_urls.get_all_urls(),
+        "count": len(downloader.found_urls.get_all_urls())
+    })
+
+@app.route("/api/reel-finder-url")
+async def get_reel_finder_url():
+    return jsonify({
+        "url": REEL_FINDER_URL,
+        "environment": "render" if os.environ.get("RENDER") else "local"
+    })
+
+@app.route("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "service": "Intelligent Reel Downloader",
+        "reel_finder_url": REEL_FINDER_URL,
+        "environment": "render" if os.environ.get("RENDER") else "local"
+    }
+
+
+# -----------------------------
+# HTML Template with Found URLs Display
+# -----------------------------
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -444,7 +571,17 @@ async def index():
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #0a0a0f; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; padding: 20px; }
-        .container { background: #1a1a1a; padding: 30px; border-radius: 16px; max-width: 900px; width: 100%; }
+        .container { background: #1a1a1a; padding: 30px; border-radius: 16px; max-width: 1000px; width: 100%; }
+        .reel-finder-info { 
+            background: #2a2a2a; 
+            padding: 10px 15px; 
+            border-radius: 8px; 
+            margin-bottom: 15px;
+            font-size: 13px;
+            color: #888;
+            border-left: 3px solid #dc2743;
+        }
+        .reel-finder-info strong { color: #4ade80; }
         h1 { color: #dc2743; font-size: 28px; display: flex; align-items: center; gap: 10px; }
         .subtitle { color: #888; margin: 5px 0 20px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }
@@ -470,8 +607,7 @@ async def index():
         .badge { padding: 2px 12px; border-radius: 20px; font-size: 11px; }
         .badge-pending { background: #f59e0b; color: #000; }
         .badge-downloaded { background: #10b981; color: #000; }
-        .badge-failed { background: #ef4444; color: #fff; }
-        .badge-skipped { background: #6b7280; color: #fff; }
+        .badge-url { background: #3b82f6; color: #fff; }
         .checkbox { width: 20px; height: 20px; cursor: pointer; accent-color: #dc2743; }
         .status-box { padding: 15px; border-radius: 10px; margin: 15px 0; display: none; }
         .status-box.success { display: block; background: #10b98120; border: 1px solid #10b981; }
@@ -481,6 +617,18 @@ async def index():
         .progress-fill { height: 100%; background: linear-gradient(90deg, #dc2743, #bc1888); width: 0%; transition: width 0.5s; }
         .footer { margin-top: 20px; color: #666; font-size: 12px; text-align: center; border-top: 1px solid #2a2a2a; padding-top: 20px; }
         .select-all { display: flex; align-items: center; gap: 10px; margin: 10px 0; color: #888; }
+        .found-urls-section { margin-top: 20px; }
+        .found-urls-section details { cursor: pointer; }
+        .found-urls-section summary { color: #dc2743; font-weight: bold; padding: 10px; background: #2a2a2a; border-radius: 8px; }
+        .url-item { 
+            padding: 4px 10px; 
+            border-bottom: 1px solid #333; 
+            font-size: 12px; 
+            display: flex; 
+            justify-content: space-between;
+            align-items: center;
+        }
+        .url-item .url { color: #4ade80; word-break: break-all; }
         @media (max-width: 600px) {
             .container { padding: 20px; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
@@ -492,6 +640,13 @@ async def index():
     <div class="container">
         <h1>🎬 Intelligent Reel Downloader</h1>
         <p class="subtitle">Preview reels before downloading • Powered by Reel Finder</p>
+        
+        <div class="reel-finder-info">
+            🔗 Connected to: <strong>{{ reel_finder_url }}</strong>
+            <span style="margin-left: 10px; font-size: 11px; color: #666;">
+                ({{ '✅ Render' if 'onrender.com' in reel_finder_url else '🖥️ Local' }})
+            </span>
+        </div>
         
         <div class="stats-grid">
             <div class="stat-card">
@@ -528,6 +683,20 @@ async def index():
             <div style="text-align:center;color:#888;padding:40px 0;">
                 Click "Fetch & Preview" to see available reels
             </div>
+        </div>
+        
+        <!-- Found URLs Section -->
+        <div class="found-urls-section">
+            <details>
+                <summary>📋 Found URLs from Reel Finder</summary>
+                <div style="margin-top: 10px; max-height: 300px; overflow-y: auto;">
+                    <div id="foundUrlsContent">
+                        <div style="text-align:center;color:#888;padding:20px;">
+                            Click "Fetch & Preview" to load found URLs
+                        </div>
+                    </div>
+                </div>
+            </details>
         </div>
         
         <div class="footer">
@@ -577,6 +746,43 @@ async def index():
             });
         }
         
+        function renderFoundUrls(foundUrls) {
+            const container = document.getElementById('foundUrlsContent');
+            
+            if (!foundUrls || !foundUrls.topics || Object.keys(foundUrls.topics).length === 0) {
+                container.innerHTML = '<div style="text-align:center;color:#888;padding:20px;">No URLs found yet. Click "Fetch & Preview".</div>';
+                return;
+            }
+            
+            let html = '';
+            let total = 0;
+            
+            for (const [topic, reels] of Object.entries(foundUrls.topics)) {
+                if (reels && reels.length > 0) {
+                    total += reels.length;
+                    html += `<div style="margin-top:10px;"><strong style="color:#dc2743;">#${topic}</strong> (${reels.length} URLs)`;
+                    reels.forEach(reel => {
+                        html += `
+                            <div class="url-item">
+                                <span class="url">${reel.url}</span>
+                                <span class="badge badge-url">${reel.shortcode}</span>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+            }
+            
+            if (total === 0) {
+                container.innerHTML = '<div style="text-align:center;color:#888;padding:20px;">No URLs found</div>';
+            } else {
+                container.innerHTML = `
+                    <div style="color:#888;margin-bottom:10px;">Total: <strong style="color:#fff;">${total}</strong> URLs found</div>
+                    ${html}
+                `;
+            }
+        }
+        
         async function fetchReels() {
             const btn = event.target;
             btn.disabled = true;
@@ -592,6 +798,11 @@ async def index():
                     showStatus(`✅ Found ${data.new} new reels (${data.already_downloaded} already downloaded)`, 'success');
                     renderReels(data);
                     updateStats();
+                    
+                    // Also update found URLs
+                    const foundResponse = await fetch('/api/found-urls');
+                    const foundData = await foundResponse.json();
+                    renderFoundUrls(foundData);
                 } else {
                     showStatus(`❌ Error: ${data.error}`, 'error');
                 }
@@ -615,7 +826,6 @@ async def index():
             let html = '';
             let totalNew = 0;
             
-            // Select All checkbox
             html += `
                 <div class="select-all">
                     <input type="checkbox" class="checkbox" onchange="toggleAll(this.checked)">
@@ -703,7 +913,6 @@ async def index():
                     showStatus(`✅ Downloaded: ${data.downloaded}, Skipped: ${data.skipped}, Failed: ${data.failed}`, 'success');
                     updateProgress(100, 'Complete!');
                     
-                    // Refresh the view
                     setTimeout(() => {
                         fetchReels();
                     }, 1000);
@@ -738,60 +947,28 @@ async def index():
             setTimeout(hideStatus, 2000);
         }
         
-        // Auto-fetch on load
+        // Load found URLs on page load
+        async function loadFoundUrls() {
+            try {
+                const response = await fetch('/api/found-urls');
+                const data = await response.json();
+                renderFoundUrls(data);
+            } catch (error) {
+                console.error('Error loading found URLs:', error);
+            }
+        }
+        
+        // Initial load
         setTimeout(fetchReels, 1000);
+        loadFoundUrls();
     </script>
 </body>
 </html>
-    """, stats=downloader.tracker.get_stats(), folder=INSTAGRAM_FOLDER_NAME)
-
-
-@app.route("/api/fetch", methods=["POST"])
-async def fetch_reels():
-    """Fetch reels from Reel Finder for preview"""
-    try:
-        results = await downloader.fetch_reels()
-        return jsonify({
-            "success": True,
-            **results
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/download", methods=["POST"])
-async def download_reels():
-    """Download selected pending reels"""
-    try:
-        data = await request.get_json()
-        shortcodes = data.get("shortcodes", [])
-        results = await downloader.download_pending(shortcodes)
-        return jsonify({
-            "success": True,
-            **results
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/stats")
-async def get_stats():
-    return jsonify(downloader.tracker.get_stats())
-
-
-@app.route("/api/pending")
-async def get_pending():
-    """Get all pending reels"""
-    return jsonify({
-        "success": True,
-        "pending": downloader.tracker.get_pending()
-    })
-
-
-@app.route("/health")
-async def health():
-    return {"status": "healthy", "service": "Intelligent Reel Downloader"}
+"""
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    print(f"🚀 Starting server on http://localhost:{PORT}")
+    print(f"📌 Connected to Reel Finder: {REEL_FINDER_URL}")
+    print("📌 Use the UI to fetch and download reels")
+    app.run(host="0.0.0.0", port=PORT, debug=False)
