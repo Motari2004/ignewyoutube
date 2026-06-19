@@ -1,5 +1,5 @@
 """
-Intelligent Daily Reel Downloader - Shows Found URLs from Reel Finder
+Intelligent Daily Reel Downloader - Loads URLs from Google Drive & Reel Finder
 """
 
 import os
@@ -10,6 +10,7 @@ import json
 import re
 import base64
 import pickle
+import io
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -20,7 +21,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 # -----------------------------
 # Configuration
@@ -43,7 +44,9 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 INSTAGRAM_FOLDER_NAME = "Instagram_Daily_Reels"
 DOWNLOADED_LOG_FILE = "downloaded_reels.json"
 PENDING_LOG_FILE = "pending_reels.json"
-FOUND_URLS_FILE = "found_urls.json"  # New file to cache found URLs
+FOUND_URLS_FILE = "found_urls.json"
+SHARED_DRIVE_FOLDER = "Reel_Finder_Data"
+SHARED_FILE_NAME = "shared_reels.json"
 
 COOKIES_CONTENT = os.environ.get("COOKIES_CONTENT")
 if COOKIES_CONTENT:
@@ -61,35 +64,286 @@ logger = logging.getLogger("Reel-Downloader")
 logger.info(f"📌 Using Reel Finder at: {REEL_FINDER_URL}")
 
 
+
+
+
+
+
+
+
+
+
+
+class SharedDriveLoader:
+    """Load shared data from Google Drive"""
+    
+    def __init__(self):
+        self.service = self._authenticate()
+        self.folder_id = self._get_folder_id()
+    
+    def _authenticate(self):
+        creds = None
+        
+        # 1. Try environment token (Render)
+        token_json = os.environ.get('GOOGLE_DRIVE_TOKEN')
+        if token_json:
+            try:
+                token_data = json.loads(base64.b64decode(token_json).decode('utf-8'))
+                creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+                logger.info("Drive authenticated via GOOGLE_DRIVE_TOKEN")
+                return build('drive', 'v3', credentials=creds)
+            except Exception as e:
+                logger.warning(f"GOOGLE_DRIVE_TOKEN failed: {e}")
+        
+        # 2. Try local token file
+        if os.path.exists('drive_token.pickle'):
+            try:
+                with open('drive_token.pickle', 'rb') as f:
+                    creds = pickle.load(f)
+                logger.info("Drive authenticated via drive_token.pickle")
+                return build('drive', 'v3', credentials=creds)
+            except Exception as e:
+                logger.warning(f"drive_token.pickle failed: {e}")
+        
+        # 3. Try credentials.json (Local development)
+        if os.path.exists('credentials.json'):
+            try:
+                from google_auth_oauthlib.flow import InstalledAppFlow
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+                logger.info("Drive authenticated via credentials.json")
+                # Save token for future use
+                with open('drive_token.pickle', 'wb') as f:
+                    pickle.dump(creds, f)
+                logger.info("Token saved to drive_token.pickle for future use")
+                return build('drive', 'v3', credentials=creds)
+            except Exception as e:
+                logger.warning(f"credentials.json authentication failed: {e}")
+                # Try alternative method if run_local_server fails
+                try:
+                    from google_auth_oauthlib.flow import InstalledAppFlow
+                    flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                    creds = flow.run_console()
+                    logger.info("Drive authenticated via credentials.json (console mode)")
+                    with open('drive_token.pickle', 'wb') as f:
+                        pickle.dump(creds, f)
+                    logger.info("Token saved to drive_token.pickle for future use")
+                    return build('drive', 'v3', credentials=creds)
+                except Exception as e2:
+                    logger.warning(f"credentials.json console auth failed: {e2}")
+        
+        # 4. Try service account (Render)
+        credentials_json = os.environ.get('GOOGLE_CREDENTIALS')
+        if credentials_json:
+            try:
+                credentials_data = json.loads(base64.b64decode(credentials_json).decode('utf-8'))
+                if 'client_email' in credentials_data:
+                    from google.oauth2 import service_account
+                    creds = service_account.Credentials.from_service_account_info(
+                        credentials_data, scopes=SCOPES
+                    )
+                    logger.info("Drive authenticated via service account")
+                    return build('drive', 'v3', credentials=creds)
+                else:
+                    # Try OAuth2 flow with client config
+                    from google_auth_oauthlib.flow import InstalledAppFlow
+                    flow = InstalledAppFlow.from_client_config(credentials_data, SCOPES)
+                    creds = flow.run_local_server(port=0, open_browser=False)
+                    logger.info("Drive authenticated via GOOGLE_CREDENTIALS OAuth2")
+                    return build('drive', 'v3', credentials=creds)
+            except Exception as e:
+                logger.warning(f"GOOGLE_CREDENTIALS failed: {e}")
+        
+        # 5. Try to create credentials from environment as fallback
+        creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+        if creds_json:
+            try:
+                creds_data = json.loads(base64.b64decode(creds_json).decode('utf-8'))
+                flow = InstalledAppFlow.from_client_config(creds_data, SCOPES)
+                creds = flow.run_local_server(port=0, open_browser=False)
+                logger.info("Drive authenticated via GOOGLE_CREDENTIALS_JSON")
+                return build('drive', 'v3', credentials=creds)
+            except Exception as e:
+                logger.warning(f"GOOGLE_CREDENTIALS_JSON failed: {e}")
+        
+        logger.error("❌ No Drive credentials found")
+        logger.info("📌 To authenticate, place 'credentials.json' in the project folder")
+        logger.info("📌 Or set GOOGLE_DRIVE_TOKEN environment variable")
+        return None
+    
+    def _get_folder_id(self):
+        if not self.service:
+            return None
+        
+        try:
+            query = f"name='{SHARED_DRIVE_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            results = self.service.files().list(q=query, fields="files(id)").execute()
+            files = results.get('files', [])
+            if files:
+                logger.info(f"✅ Found shared folder: {SHARED_DRIVE_FOLDER}")
+                return files[0]['id']
+            
+            # Create folder if it doesn't exist
+            logger.info(f"📁 Creating folder: {SHARED_DRIVE_FOLDER}")
+            file_metadata = {
+                'name': SHARED_DRIVE_FOLDER,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = self.service.files().create(body=file_metadata, fields='id').execute()
+            folder_id = folder.get('id')
+            logger.info(f"✅ Created folder: {SHARED_DRIVE_FOLDER} (ID: {folder_id})")
+            return folder_id
+            
+        except Exception as e:
+            logger.error(f"Error finding/creating folder: {e}")
+            return None
+    
+    async def load_shared_data(self) -> Optional[Dict]:
+        """Load shared data from Google Drive"""
+        if not self.service:
+            logger.error("No Drive service available")
+            return None
+        
+        if not self.folder_id:
+            logger.error("No folder ID available")
+            return None
+        
+        try:
+            query = f"'{self.folder_id}' in parents and name='{SHARED_FILE_NAME}' and trashed=false"
+            results = self.service.files().list(q=query, fields="files(id, name)").execute()
+            files = results.get('files', [])
+            
+            if not files:
+                logger.info(f"No shared file '{SHARED_FILE_NAME}' found")
+                return None
+            
+            file_id = files[0]['id']
+            logger.info(f"📥 Downloading: {SHARED_FILE_NAME}")
+            
+            request = self.service.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                if status:
+                    progress = int(status.progress() * 100)
+                    logger.info(f"Download progress: {progress}%")
+            
+            fh.seek(0)
+            data = json.loads(fh.read().decode('utf-8'))
+            logger.info(f"✅ Loaded shared data: {data.get('total_urls', 0)} URLs from {data.get('date', 'unknown date')}")
+            
+            # Verify data structure
+            if not data.get('topics'):
+                logger.warning("Loaded data has no 'topics' field")
+                return None
+            
+            return data
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in shared file: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Load from Drive error: {e}")
+            return None
+    
+    async def save_shared_data(self, data: Dict) -> bool:
+        """Save shared data to Google Drive"""
+        if not self.service or not self.folder_id:
+            logger.error("No Drive service or folder available")
+            return False
+        
+        try:
+            # Check if file exists
+            query = f"'{self.folder_id}' in parents and name='{SHARED_FILE_NAME}' and trashed=false"
+            results = self.service.files().list(q=query, fields="files(id)").execute()
+            files = results.get('files', [])
+            
+            # Prepare file content
+            file_content = json.dumps(data, indent=2, ensure_ascii=False)
+            media = MediaFileUpload(
+                io.BytesIO(file_content.encode('utf-8')),
+                mimetype='application/json',
+                resumable=True
+            )
+            
+            if files:
+                # Update existing file
+                file_id = files[0]['id']
+                logger.info(f"📤 Updating: {SHARED_FILE_NAME}")
+                self.service.files().update(
+                    fileId=file_id,
+                    media_body=media
+                ).execute()
+                logger.info(f"✅ Updated shared file: {SHARED_FILE_NAME}")
+            else:
+                # Create new file
+                logger.info(f"📤 Creating: {SHARED_FILE_NAME}")
+                file_metadata = {
+                    'name': SHARED_FILE_NAME,
+                    'parents': [self.folder_id]
+                }
+                self.service.files().create(
+                    body=file_metadata,
+                    media_body=media
+                ).execute()
+                logger.info(f"✅ Created shared file: {SHARED_FILE_NAME}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Save to Drive error: {e}")
+            return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class FoundUrlsTracker:
-    """Track found URLs from Reel Finder"""
+    """Track found URLs from various sources"""
     
     def __init__(self):
         self.found_urls = self._load()
+        self.data_source = "local"
     
     def _load(self) -> Dict:
         if os.path.exists(FOUND_URLS_FILE):
             try:
-                with open(FOUND_URLS_FILE, 'r') as f:
+                with open(FOUND_URLS_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except:
                 return {}
         return {}
     
     def _save(self):
-        with open(FOUND_URLS_FILE, 'w') as f:
+        with open(FOUND_URLS_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.found_urls, f, indent=2)
     
-    def update(self, topics_data: Dict):
-        """Update found URLs from Reel Finder"""
+    def update(self, topics_data: Dict, source: str = "local"):
+        """Update found URLs"""
         self.found_urls = {
             "last_updated": datetime.now().isoformat(),
-            "topics": topics_data
+            "topics": topics_data,
+            "source": source
         }
+        self.data_source = source
         self._save()
     
     def get_all_urls(self) -> List[str]:
-        """Get all found URLs as a flat list"""
         urls = []
         for topic, reels in self.found_urls.get("topics", {}).items():
             for reel in reels:
@@ -98,12 +352,14 @@ class FoundUrlsTracker:
         return urls
     
     def get_topic_urls(self, topic: str) -> List[str]:
-        """Get URLs for a specific topic"""
         urls = []
         for reel in self.found_urls.get("topics", {}).get(topic, []):
             if isinstance(reel, dict) and reel.get("url"):
                 urls.append(reel["url"])
         return urls
+    
+    def get_source(self) -> str:
+        return self.data_source
 
 
 class ReelTracker:
@@ -116,7 +372,7 @@ class ReelTracker:
     def _load(self, filename: str) -> Dict:
         if os.path.exists(filename):
             try:
-                with open(filename, 'r') as f:
+                with open(filename, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     if isinstance(data, list):
                         logger.info(f"Converting old list format to dict for {filename}")
@@ -135,7 +391,7 @@ class ReelTracker:
         return {}
     
     def _save(self, filename: str, data: Dict):
-        with open(filename, 'w') as f:
+        with open(filename, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
     
     def is_downloaded(self, shortcode: str) -> bool:
@@ -278,6 +534,7 @@ class IntelligentReelDownloader:
     def __init__(self):
         self.tracker = ReelTracker()
         self.drive = GoogleDriveUploader()
+        self.drive_loader = SharedDriveLoader()
         self.found_urls = FoundUrlsTracker()
         self.current_pending = []
     
@@ -286,7 +543,75 @@ class IntelligentReelDownloader:
         return match.group(1) if match else None
     
     async def fetch_reels(self) -> Dict:
-        """Fetch reels from Reel Finder without downloading"""
+        """Fetch reels from Google Drive first, then fallback to Reel Finder"""
+        
+        results = {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "topics": {},
+            "total": 0,
+            "new": 0,
+            "already_downloaded": 0,
+            "reel_finder_url": REEL_FINDER_URL,
+            "data_source": "unknown"
+        }
+        
+        all_reels = []
+        found_topics = {}
+        
+        # FIRST: Try to load from Google Drive shared file
+        shared_data = await self.drive_loader.load_shared_data()
+        
+        if shared_data and shared_data.get("topics"):
+            logger.info(f"✅ Loaded {shared_data.get('total_urls', 0)} URLs from Google Drive")
+            
+            found_topics = shared_data.get("topics", {})
+            results["date"] = shared_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+            results["data_source"] = "google_drive"
+            
+            # Process shared data
+            for topic, reels_data in found_topics.items():
+                topic_reels = []
+                for reel_data in reels_data:
+                    shortcode = reel_data.get("shortcode", "")
+                    if not shortcode:
+                        continue
+                    
+                    url = reel_data.get("url", "")
+                    is_downloaded = self.tracker.is_downloaded(shortcode)
+                    
+                    reel_info = {
+                        "shortcode": shortcode,
+                        "url": url,
+                        "topic": topic,
+                        "is_downloaded": is_downloaded,
+                        "status": "downloaded" if is_downloaded else "pending"
+                    }
+                    
+                    topic_reels.append(reel_info)
+                    all_reels.append(reel_info)
+                    
+                    if not is_downloaded:
+                        results["new"] += 1
+                    else:
+                        results["already_downloaded"] += 1
+                    
+                    results["total"] += 1
+                
+                results["topics"][topic] = topic_reels
+            
+            # Save found URLs to local cache
+            self.found_urls.update(found_topics, "google_drive")
+            
+            # Save pending reels
+            pending = [r for r in all_reels if not r["is_downloaded"]]
+            self.tracker.save_pending(pending)
+            self.current_pending = pending
+            
+            return results
+        
+        # SECOND: Fallback to Reel Finder API
+        logger.info("No shared data found, fetching from Reel Finder API")
+        
         topics = ["mafia", "gangstars", "murphy", "war", "ninjas"]
         
         try:
@@ -298,19 +623,7 @@ class IntelligentReelDownloader:
                         topics = data["topics"]
                         logger.info(f"Using topics from Reel Finder: {topics}")
         except Exception as e:
-            logger.warning(f"Could not fetch topics from Reel Finder, using defaults: {e}")
-        
-        results = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "topics": {},
-            "total": 0,
-            "new": 0,
-            "already_downloaded": 0,
-            "reel_finder_url": REEL_FINDER_URL
-        }
-        
-        all_reels = []
-        found_topics = {}
+            logger.warning(f"Could not fetch topics from Reel Finder: {e}")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             for topic in topics:
@@ -355,10 +668,12 @@ class IntelligentReelDownloader:
                 except Exception as e:
                     logger.error(f"Error fetching {topic}: {e}")
         
-        # Save found URLs
-        self.found_urls.update(found_topics)
+        results["data_source"] = "reel_finder_api"
         
-        # Save pending reels (only new ones)
+        # Save found URLs
+        self.found_urls.update(found_topics, "reel_finder_api")
+        
+        # Save pending reels
         pending = [r for r in all_reels if not r["is_downloaded"]]
         self.tracker.save_pending(pending)
         self.current_pending = pending
@@ -488,11 +803,13 @@ downloader = IntelligentReelDownloader()
 async def index():
     stats = downloader.tracker.get_stats()
     found_urls = downloader.found_urls.found_urls
+    data_source = downloader.found_urls.get_source()
     return await render_template_string(HTML_TEMPLATE, 
                                        stats=stats, 
                                        folder=INSTAGRAM_FOLDER_NAME, 
                                        reel_finder_url=REEL_FINDER_URL,
-                                       found_urls=found_urls)
+                                       found_urls=found_urls,
+                                       data_source=data_source)
 
 @app.route("/api/fetch", methods=["POST"])
 async def fetch_reels():
@@ -532,15 +849,17 @@ async def get_pending():
 
 @app.route("/api/found-urls")
 async def get_found_urls():
-    """Get all found URLs from Reel Finder"""
-    return jsonify(downloader.found_urls.found_urls)
+    return jsonify({
+        "source": downloader.found_urls.get_source(),
+        "data": downloader.found_urls.found_urls
+    })
 
 @app.route("/api/found-urls/all")
 async def get_all_found_urls():
-    """Get all found URLs as a flat list"""
     return jsonify({
         "urls": downloader.found_urls.get_all_urls(),
-        "count": len(downloader.found_urls.get_all_urls())
+        "count": len(downloader.found_urls.get_all_urls()),
+        "source": downloader.found_urls.get_source()
     })
 
 @app.route("/api/reel-finder-url")
@@ -556,7 +875,8 @@ async def health():
         "status": "healthy",
         "service": "Intelligent Reel Downloader",
         "reel_finder_url": REEL_FINDER_URL,
-        "environment": "render" if os.environ.get("RENDER") else "local"
+        "environment": "render" if os.environ.get("RENDER") else "local",
+        "data_source": downloader.found_urls.get_source()
     }
 
 
@@ -582,6 +902,16 @@ HTML_TEMPLATE = """
             border-left: 3px solid #dc2743;
         }
         .reel-finder-info strong { color: #4ade80; }
+        .reel-finder-info .source-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+        .source-badge.gdrive { background: #3b82f6; color: #fff; }
+        .source-badge.api { background: #8b5cf6; color: #fff; }
+        .source-badge.local { background: #6b7280; color: #fff; }
         h1 { color: #dc2743; font-size: 28px; display: flex; align-items: center; gap: 10px; }
         .subtitle { color: #888; margin: 5px 0 20px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin: 20px 0; }
@@ -639,12 +969,15 @@ HTML_TEMPLATE = """
 <body>
     <div class="container">
         <h1>🎬 Intelligent Reel Downloader</h1>
-        <p class="subtitle">Preview reels before downloading • Powered by Reel Finder</p>
+        <p class="subtitle">Preview reels before downloading • Powered by Reel Finder & Google Drive</p>
         
         <div class="reel-finder-info">
             🔗 Connected to: <strong>{{ reel_finder_url }}</strong>
             <span style="margin-left: 10px; font-size: 11px; color: #666;">
                 ({{ '✅ Render' if 'onrender.com' in reel_finder_url else '🖥️ Local' }})
+            </span>
+            <span class="source-badge {% if data_source == 'google_drive' %}gdrive{% elif data_source == 'reel_finder_api' %}api{% else %}local{% endif %}">
+                {% if data_source == 'google_drive' %}📁 Google Drive{% elif data_source == 'reel_finder_api' %}🌐 API{% else %}💾 Local{% endif %}
             </span>
         </div>
         
@@ -688,7 +1021,7 @@ HTML_TEMPLATE = """
         <!-- Found URLs Section -->
         <div class="found-urls-section">
             <details>
-                <summary>📋 Found URLs from Reel Finder</summary>
+                <summary>📋 Found URLs <span style="font-weight:normal;color:#888;font-size:12px;">({{ found_urls.topics|length if found_urls and found_urls.topics else 0 }} topics)</span></summary>
                 <div style="margin-top: 10px; max-height: 300px; overflow-y: auto;">
                     <div id="foundUrlsContent">
                         <div style="text-align:center;color:#888;padding:20px;">
@@ -778,6 +1111,7 @@ HTML_TEMPLATE = """
             } else {
                 container.innerHTML = `
                     <div style="color:#888;margin-bottom:10px;">Total: <strong style="color:#fff;">${total}</strong> URLs found</div>
+                    <div style="color:#888;font-size:11px;margin-bottom:5px;">Source: ${foundUrls.source || 'unknown'}</div>
                     ${html}
                 `;
             }
@@ -788,21 +1122,24 @@ HTML_TEMPLATE = """
             btn.disabled = true;
             btn.textContent = '⏳ Fetching...';
             hideStatus();
-            showStatus('⏳ Fetching reels from Reel Finder...', 'info');
+            showStatus('⏳ Fetching reels from Google Drive & Reel Finder...', 'info');
             
             try {
                 const response = await fetch('/api/fetch', { method: 'POST' });
                 const data = await response.json();
                 
                 if (data.success) {
-                    showStatus(`✅ Found ${data.new} new reels (${data.already_downloaded} already downloaded)`, 'success');
+                    showStatus(`✅ Found ${data.new} new reels (${data.already_downloaded} already downloaded) from ${data.data_source}`, 'success');
                     renderReels(data);
                     updateStats();
                     
                     // Also update found URLs
                     const foundResponse = await fetch('/api/found-urls');
                     const foundData = await foundResponse.json();
-                    renderFoundUrls(foundData);
+                    renderFoundUrls(foundData.data);
+                    
+                    // Update source badge
+                    updateSourceBadge(foundData.source);
                 } else {
                     showStatus(`❌ Error: ${data.error}`, 'error');
                 }
@@ -811,6 +1148,23 @@ HTML_TEMPLATE = """
             } finally {
                 btn.disabled = false;
                 btn.textContent = '🔍 Fetch & Preview';
+            }
+        }
+        
+        function updateSourceBadge(source) {
+            const badge = document.querySelector('.source-badge');
+            if (!badge) return;
+            
+            badge.className = 'source-badge';
+            if (source === 'google_drive') {
+                badge.classList.add('gdrive');
+                badge.textContent = '📁 Google Drive';
+            } else if (source === 'reel_finder_api') {
+                badge.classList.add('api');
+                badge.textContent = '🌐 API';
+            } else {
+                badge.classList.add('local');
+                badge.textContent = '💾 Local';
             }
         }
         
@@ -952,7 +1306,8 @@ HTML_TEMPLATE = """
             try {
                 const response = await fetch('/api/found-urls');
                 const data = await response.json();
-                renderFoundUrls(data);
+                renderFoundUrls(data.data);
+                updateSourceBadge(data.source);
             } catch (error) {
                 console.error('Error loading found URLs:', error);
             }
@@ -970,5 +1325,6 @@ HTML_TEMPLATE = """
 if __name__ == "__main__":
     print(f"🚀 Starting server on http://localhost:{PORT}")
     print(f"📌 Connected to Reel Finder: {REEL_FINDER_URL}")
+    print("📌 Will load URLs from Google Drive first, then fallback to API")
     print("📌 Use the UI to fetch and download reels")
     app.run(host="0.0.0.0", port=PORT, debug=False)
